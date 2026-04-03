@@ -1,0 +1,44 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  APP_NAME: insurance-portal
+  ENV_NAME: insurance-portal-env
+  S3_BUCKET: your-eb-deployment-bucket
+  AWS_REGION: us-east-1
+
+build:
+  stage: build
+  image: node:18-alpine
+  cache:
+    paths:
+      - node_modules/
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - build/
+    expire_in: 1 hour
+
+deploy:
+  stage: deploy
+  image: python:3.11-alpine
+  dependencies:
+    - build
+  script:
+    - pip install awsebcli awscli --quiet
+    - zip -r deploy.zip build/ .ebextensions/ Procfile 2>/dev/null || zip -r deploy.zip build/
+    - aws s3 cp deploy.zip s3://$S3_BUCKET/$APP_NAME-$CI_COMMIT_SHORT_SHA.zip
+    - aws elasticbeanstalk create-application-version
+        --application-name $APP_NAME
+        --version-label $CI_COMMIT_SHORT_SHA
+        --source-bundle S3Bucket=$S3_BUCKET,S3Key=$APP_NAME-$CI_COMMIT_SHORT_SHA.zip
+        --region $AWS_REGION
+    - aws elasticbeanstalk update-environment
+        --environment-name $ENV_NAME
+        --version-label $CI_COMMIT_SHORT_SHA
+        --region $AWS_REGION
+  only:
+    - main
