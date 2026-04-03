@@ -5,7 +5,7 @@ stages:
 variables:
   APP_NAME: insurance-portal
   ENV_NAME: insurance-portal-env
-  S3_BUCKET: your-eb-deployment-bucket
+  S3_BUCKET: insurance-portal-deploy-bucket-7564
   AWS_REGION: us-east-1
 
 build:
@@ -28,17 +28,24 @@ deploy:
   dependencies:
     - build
   script:
+    # Install required tools
+    - apk add --no-cache zip
     - pip install awsebcli awscli --quiet
+
+    # Create unique version label
+    - export VERSION_LABEL="${CI_COMMIT_SHORT_SHA}-${CI_PIPELINE_ID}"
+
+    # Package build files
     - zip -r deploy.zip build/ .ebextensions/ Procfile 2>/dev/null || zip -r deploy.zip build/
-    - aws s3 cp deploy.zip s3://$S3_BUCKET/$APP_NAME-$CI_COMMIT_SHORT_SHA.zip
-    - aws elasticbeanstalk create-application-version
-        --application-name $APP_NAME
-        --version-label $CI_COMMIT_SHORT_SHA
-        --source-bundle S3Bucket=$S3_BUCKET,S3Key=$APP_NAME-$CI_COMMIT_SHORT_SHA.zip
-        --region $AWS_REGION
-    - aws elasticbeanstalk update-environment
-        --environment-name $ENV_NAME
-        --version-label $CI_COMMIT_SHORT_SHA
-        --region $AWS_REGION
+
+    # Upload to S3
+    - aws s3 cp deploy.zip s3://$S3_BUCKET/$APP_NAME-$VERSION_LABEL.zip
+
+    # Create new application version in Elastic Beanstalk
+    - aws elasticbeanstalk create-application-version --application-name $APP_NAME --version-label $VERSION_LABEL --source-bundle S3Bucket=$S3_BUCKET,S3Key=$APP_NAME-$VERSION_LABEL.zip --region $AWS_REGION
+
+    # Deploy to environment
+    - aws elasticbeanstalk update-environment --environment-name $ENV_NAME --version-label $VERSION_LABEL --region $AWS_REGION
+
   only:
     - main
