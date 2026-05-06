@@ -1,36 +1,111 @@
-# This workflow will run tests using node and then publish a package to GitHub Packages when a release is created
-# For more information see: https://docs.github.com/en/actions/publishing-packages/publishing-nodejs-packages
+---
+# yaml-templates/github-actions/ci/react-ci.yml
+# Purpose: GitHub Actions CI workflow for React applications.
+# Jobs: Build → Test → SAST → Publish
+# Tools: Gitleaks, Semgrep, Trivy for security scanning
 
-name: Node.js Package
+name: "React CI Pipeline"
 
 on:
-  release:
-    types: [created]
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  NODE_VERSION: "20.x"
+  PROJECT_NAME: "${{ github.event.repository.name }}"
+  ARTIFACT_NAME: "${{ github.event.repository.name }}-drop"
 
 jobs:
   build:
+    name: "Build React Application"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm ci
-      - run: npm test
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
 
-  publish-gpr:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: "Setup Node.js"
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: https://npm.pkg.github.com/
-      - run: npm ci
-      - run: npm publish
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "npm"
+
+      - name: "Install Dependencies"
+        run: "npm ci"
+
+      - name: "Build Application"
+        run: "npm run build"
+
+      - name: "Upload Build Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "build-output"
+          path: "build/"
+
+  test:
+    name: "Run Tests"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
+
+      - name: "Setup Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "npm"
+
+      - name: "Install Dependencies"
+        run: "npm ci"
+
+      - name: "Run Unit Tests"
+        run: "npm test -- --coverage --watchAll=false"
+
+      - name: "Upload Coverage"
+        uses: codecov/codecov-action@v3
+
+  sast:
+    name: "Security Scan"
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
+
+      - name: "Gitleaks — Secret Detection"
+        uses: gitleaks/gitleaks-action@v2
         env:
-          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: "Semgrep — Code Analysis"
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: "auto"
+
+      - name: "Trivy — Dependency Scan"
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+
+  publish:
+    name: "Publish Artifact"
+    runs-on: ubuntu-latest
+    needs: sast
+    steps:
+      - name: "Download Build Artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: "build-output"
+          path: "build/"
+
+      - name: "Publish ${{ env.ARTIFACT_NAME }}"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "${{ env.ARTIFACT_NAME }}"
+          path: "build/"
