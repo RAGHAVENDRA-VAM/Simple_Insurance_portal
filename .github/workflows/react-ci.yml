@@ -68,7 +68,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.organization=RAGHAVENDRA-VAM
+            -Dsonar.organization=raghava-devsecops
             -Dsonar.projectKey=raghava-devsecops
             -Dsonar.sources=src
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
