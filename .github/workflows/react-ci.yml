@@ -2,116 +2,104 @@ name: React CI Pipeline
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 env:
   NODE_VERSION: '20.x'
   PROJECT_NAME: Simple_Insurance_portal
   ARTIFACT_NAME: Simple_Insurance_portal-drop
+  SONAR_ORGANIZATION: raghava-devsecops
+  SONAR_PROJECT_KEY: raghava-devsecops
 
 jobs:
   build:
-    name: Build React Application
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Build Application
-        run: npm run build
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: build/
 
   sonarcloud:
-    name: SonarCloud Scan
     runs-on: ubuntu-latest
     needs: build
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install Dependencies
-        run: npm ci
-
+      - run: npm ci
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.organization=raghava-devsecops
-            -Dsonar.projectKey=raghava-devsecops
+            -Dsonar.organization=${{ env.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
             -Dsonar.sources=src
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 
-  sast:
-    name: Security Scan
+  sonar-report:
     runs-on: ubuntu-latest
     needs: sonarcloud
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Wait for analysis
+        run: sleep 20
+      - run: mkdir -p reports
+      - name: Download metrics
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/measures/component?component=${{ env.SONAR_PROJECT_KEY }}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,ncloc,reliability_rating,security_rating,sqale_rating,alert_status" -o reports/project-metrics.json
+          curl -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/issues/search?componentKeys=${{ env.SONAR_PROJECT_KEY }}&ps=500" -o reports/issues.json
+          curl -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/hotspots/search?projectKey=${{ env.SONAR_PROJECT_KEY }}&ps=500" -o reports/security-hotspots.json
+          curl -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/qualitygates/project_status?projectKey=${{ env.SONAR_PROJECT_KEY }}" -o reports/quality-gate.json
+          curl -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/project_analyses/search?project=${{ env.SONAR_PROJECT_KEY }}" -o reports/analysis-history.json
+          curl -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/components/tree?component=${{ env.SONAR_PROJECT_KEY }}" -o reports/components.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sonar-Reports
+          path: reports/
 
-      - name: Gitleaks — Secret Detection
-        uses: gitleaks/gitleaks-action@v2
+  sast:
+    runs-on: ubuntu-latest
+    needs: [sonarcloud, sonar-report]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Semgrep — Code Analysis
-        uses: returntocorp/semgrep-action@v1
+      - uses: returntocorp/semgrep-action@v1
         with:
           config: auto
-
-      - name: Trivy — Dependency Scan
-        uses: aquasecurity/trivy-action@master
+      - uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
 
   publish:
-    name: Publish Artifact
     runs-on: ubuntu-latest
     needs: sast
-
     steps:
-      - name: Download Build Artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: build-output
           path: build/
-
-      - name: Publish Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: build/
